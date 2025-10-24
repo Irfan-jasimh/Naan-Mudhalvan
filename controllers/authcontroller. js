@@ -1,0 +1,139 @@
+const User = require('../models/User');
+const { generateToken } = require('../utils/tokenGenerator');
+const { validationResult } = require('express-validator');
+
+const authController = {
+    // Render login page
+    getLogin: (req, res) => {
+        res.render('auth/login', { 
+            title: 'Login',
+            error: null,
+            formData: {}
+        });
+    },
+
+    // Render register page
+    getRegister: (req, res) => {
+        res.render('auth/register', { 
+            title: 'Register',
+            error: null,
+            formData: {}
+        });
+    },
+
+    // Handle user registration
+    register: async (req, res) => {
+        try {
+            const errors = validationResult(req);
+            if (!errors.isEmpty()) {
+                return res.render('auth/register', {
+                    title: 'Register',
+                    error: errors.array()[0].msg,
+                    formData: req.body
+                });
+            }
+
+            const { username, email, password } = req.body;
+
+            // Check if user exists
+            const existingUser = await User.findOne({
+                $or: [{ email }, { username }]
+            });
+
+            if (existingUser) {
+                return res.render('auth/register', {
+                    title: 'Register',
+                    error: 'User with this email or username already exists',
+                    formData: req.body
+                });
+            }
+
+            // Create user
+            const user = new User({ username, email, password });
+            await user.save();
+
+            // Generate token and set cookie
+            const token = generateToken(user._id);
+            res.cookie('token', token, {
+                httpOnly: true,
+                secure: process.env.NODE_ENV === 'production',
+                maxAge: 30 * 24 * 60 * 60 * 1000 // 30 days
+            });
+
+            req.flash('success', 'Registration successful! Welcome to our platform.');
+            res.redirect('/dashboard');
+
+        } catch (error) {
+            console.error('Registration error:', error);
+            res.render('auth/register', {
+                title: 'Register',
+                error: 'Server error during registration',
+                formData: req.body
+            });
+        }
+    },
+
+    // Handle user login
+    login: async (req, res) => {
+        try {
+            const errors = validationResult(req);
+            if (!errors.isEmpty()) {
+                return res.render('auth/login', {
+                    title: 'Login',
+                    error: errors.array()[0].msg,
+                    formData: req.body
+                });
+            }
+
+            const { email, password } = req.body;
+
+            // Find user and include password for comparison
+            const user = await User.findOne({ email }).select('+password');
+            if (!user) {
+                return res.render('auth/login', {
+                    title: 'Login',
+                    error: 'Invalid email or password',
+                    formData: req.body
+                });
+            }
+
+            // Check password
+            const isMatch = await user.comparePassword(password);
+            if (!isMatch) {
+                return res.render('auth/login', {
+                    title: 'Login',
+                    error: 'Invalid email or password',
+                    formData: req.body
+                });
+            }
+
+            // Generate token and set cookie
+            const token = generateToken(user._id);
+            res.cookie('token', token, {
+                httpOnly: true,
+                secure: process.env.NODE_ENV === 'production',
+                maxAge: 30 * 24 * 60 * 60 * 1000
+            });
+
+            req.flash('success', `Welcome back, ${user.username}!`);
+            res.redirect('/dashboard');
+
+        } catch (error) {
+            console.error('Login error:', error);
+            res.render('auth/login', {
+                title: 'Login',
+                error: 'Server error during login',
+                formData: req.body
+            });
+        }
+    },
+
+    // Handle logout
+    logout: (req, res) => {
+        res.clearCookie('token');
+        req.flash('success', 'You have been logged out successfully.');
+        res.redirect('/auth/login');
+    }
+};
+
+module.exports = authController;
